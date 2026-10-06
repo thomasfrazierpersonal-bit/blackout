@@ -38,22 +38,84 @@ const DIFF = {
   hard:   { spd: 1.12, hear: 1.2, sight: 235 },
 };
 // human-controlled monster
-const M_PLAYER = 150, M_PLAYER_SPRINT = 205;
+const M_PLAYER = 150;
+const TP_TIME = 45, TP_MAX = 3;   // human monster: +1 teleport every 45s
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-function pushOut(o, rad, pillars) {
-  for (const p of pillars) {
-    const dx = o.x - p.x, dy = o.y - p.y;
-    const d = Math.hypot(dx, dy);
-    const min = p.r + rad;
-    if (d < min && d > 0.001) {
-      o.x = p.x + (dx / d) * min;
-      o.y = p.y + (dy / d) * min;
+// ---------- tile map helpers ----------
+const T = 40, N = 60;                 // tile size, tiles per side (N*T = W)
+const SOLID = '#DSPT';
+function solidT(grid, tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= N || ty >= N) return true;
+  return SOLID.includes(grid[ty][tx]);
+}
+function blockedAt(grid, x, y, r) {
+  const x0 = Math.floor((x - r) / T), x1 = Math.floor((x + r) / T);
+  const y0 = Math.floor((y - r) / T), y1 = Math.floor((y + r) / T);
+  return solidT(grid, x0, y0) || solidT(grid, x1, y0) || solidT(grid, x0, y1) || solidT(grid, x1, y1);
+}
+function pushOut(o, rad, grid) {
+  for (let pass = 0; pass < 2; pass++) {
+    const x0 = Math.floor((o.x - rad) / T), x1 = Math.floor((o.x + rad) / T);
+    const y0 = Math.floor((o.y - rad) / T), y1 = Math.floor((o.y + rad) / T);
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        if (!solidT(grid, tx, ty)) continue;
+        const rx = tx * T, ry = ty * T;
+        const nx = clamp(o.x, rx, rx + T), ny = clamp(o.y, ry, ry + T);
+        const dx = o.x - nx, dy = o.y - ny, d = Math.hypot(dx, dy);
+        if (d < rad) {
+          if (d > 0.0001) { o.x = nx + dx / d * rad; o.y = ny + dy / d * rad; }
+          else {
+            const l = o.x - rx, r = rx + T - o.x, t = o.y - ry, b = ry + T - o.y, m = Math.min(l, r, t, b);
+            if (m === l) o.x = rx - rad; else if (m === r) o.x = rx + T + rad; else if (m === t) o.y = ry - rad; else o.y = ry + T + rad;
+          }
+        }
+      }
     }
   }
+}
+
+function buildGrid() {
+  const g = Array.from({ length: N }, () => Array(N).fill('#'));
+  const carve = (x0, y0, x1, y1, ch) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) g[y][x] = ch; };
+  for (const [a, b] of [[2, 5], [28, 31], [54, 57]]) { carve(2, a, 57, b, '.'); carve(a, 2, b, 57, '.'); }
+  const rs = [[7, 16], [18, 26], [33, 42], [44, 52]];
+  const rooms = [];
+  for (const ry of rs) for (const rx of rs) { carve(rx[0], ry[0], rx[1], ry[1], ','); rooms.push({ x0: rx[0], x1: rx[1], y0: ry[0], y1: ry[1] }); }
+  const kinds = ['class', 'class', 'library', 'storage', 'cafe'];
+  for (const r of rooms) {
+    const cx = (r.x0 + r.x1) >> 1, cy = (r.y0 + r.y1) >> 1;
+    // doors (some room-to-room doors are left out for variety)
+    const door = (x0, y0, x1, y1, bx, by) => {
+      const inter = g[by] && g[by][bx] === ',';
+      if (inter && Math.random() < 0.3) return;
+      carve(x0, y0, x1, y1, ',');
+    };
+    door(r.x0 - 1, cy - 1, r.x0 - 1, cy + 1, r.x0 - 2, cy);
+    door(r.x1 + 1, cy - 1, r.x1 + 1, cy + 1, r.x1 + 2, cy);
+    door(cx - 1, r.y0 - 1, cx + 1, r.y0 - 1, cx, r.y0 - 2);
+    door(cx - 1, r.y1 + 1, cx + 1, r.y1 + 1, cx, r.y1 + 2);
+    // furniture, keeping a clear cross through the room
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) {
+      if (Math.abs(x - cx) <= 1 || Math.abs(y - cy) <= 1) continue;
+      const lx = x - r.x0, ly = y - r.y0;
+      if (kind === 'class' && lx % 3 === 1 && ly % 3 === 1) g[y][x] = 'D';
+      else if (kind === 'library' && (y === r.y0 || y === r.y1 || (ly % 4 === 2 && lx > 0 && lx < r.x1 - r.x0))) g[y][x] = 'S';
+      else if (kind === 'storage' && Math.random() < 0.16) g[y][x] = 'P';
+      else if (kind === 'cafe' && lx % 4 === 1 && ly % 4 === 1) g[y][x] = 'T';
+    }
+  }
+  // a few crates in the hallways
+  for (let i = 0; i < 14; i++) {
+    const x = 6 + Math.floor(Math.random() * 48), y = 6 + Math.floor(Math.random() * 48);
+    if (g[y][x] === '.' && !(x >= 28 && x <= 31 && y >= 28 && y <= 31) && !(x >= 28 && x <= 31) && !(y >= 28 && y <= 31)) g[y][x] = 'P';
+  }
+  return g;
 }
 
 // ---------- game room ----------
@@ -75,46 +137,110 @@ class Game {
   }
 
   genMap() {
-    const cx = W / 2, cy = H / 2;
-    const corners = [[260, 260], [W - 260, 260], [260, H - 260], [W - 260, H - 260]];
-    const ec = corners[Math.floor(Math.random() * 4)];
-    this.exit = { x: ec[0], y: ec[1] };
-
-    this.pillars = [];
-    let tries = 0;
-    while (this.pillars.length < 55 && tries++ < 3000) {
-      const r = rnd(28, 70), x = rnd(80, W - 80), y = rnd(80, H - 80);
-      if (dist(x, y, cx, cy) < 220 + r) continue;
-      if (dist(x, y, this.exit.x, this.exit.y) < 160 + r) continue;
-      this.pillars.push({ x, y, r });
+    this.grid = buildGrid();
+    const grid = this.grid;
+    const sx = 30 * T, sy = 30 * T;                  // spawn: middle of the building
+    // flood fill from the spawn so everything we place is reachable
+    const seen = new Uint8Array(N * N), q = [[29, 29]];
+    seen[29 * N + 29] = 1;
+    while (q.length) {
+      const [x, y] = q.pop();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (solidT(grid, nx, ny) || seen[ny * N + nx]) continue;
+        seen[ny * N + nx] = 1; q.push([nx, ny]);
+      }
     }
+    this.floors = [];
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (seen[y * N + x]) this.floors.push({ x: x * T + T / 2, y: y * T + T / 2, c: grid[y][x] });
+    const corners = [[3, 3], [56, 3], [3, 56], [56, 56]];
+    const ec = corners[Math.floor(Math.random() * 4)];
+    this.exit = { x: ec[0] * T + T / 2, y: ec[1] * T + T / 2 };
+    this.spawn = { x: sx, y: sy };
 
     this.fuses = [];
-    tries = 0;
-    let minGap = 450;
+    const roomFloors = this.floors.filter(f => f.c === ',');
+    let tries = 0, minGap = 600;
     while (this.fuses.length < FUSE_COUNT && tries++ < 6000) {
-      if (tries % 1500 === 0) minGap -= 80; // loosen if the map is crowded
-      const x = rnd(150, W - 150), y = rnd(150, H - 150);
-      if (dist(x, y, cx, cy) < 600) continue;
-      if (dist(x, y, this.exit.x, this.exit.y) < 400) continue;
-      if (this.pillars.some(p => dist(x, y, p.x, p.y) < p.r + 30)) continue;
-      if (this.fuses.some(f => dist(x, y, f.x, f.y) < minGap)) continue;
-      this.fuses.push({ x, y, c: false });
+      if (tries % 1000 === 0) minGap -= 100;
+      const f = roomFloors[Math.floor(Math.random() * roomFloors.length)];
+      if (dist(f.x, f.y, sx, sy) < 500) continue;
+      if (dist(f.x, f.y, this.exit.x, this.exit.y) < 500) continue;
+      if (this.fuses.some(o => dist(f.x, f.y, o.x, o.y) < minGap)) continue;
+      this.fuses.push({ x: f.x, y: f.y, c: false });
     }
-
-    let mx, my;
-    do { mx = rnd(200, W - 200); my = rnd(200, H - 200); } while (dist(mx, my, cx, cy) < 900);
-    this.monster = { x: mx, y: my, s: 'wander', tx: mx, ty: my, chase: null, lost: 0, stuck: 0, side: 1 };
+    let mf;
+    do { mf = this.floors[Math.floor(Math.random() * this.floors.length)]; } while (dist(mf.x, mf.y, sx, sy) < 900);
+    this.monster = { x: mf.x, y: mf.y, s: 'wander', tx: mf.x, ty: mf.y, chase: null, lost: 0 };
+    this.field = null;
     this.noises = [];
   }
 
   mapPayload() {
     return {
-      W, H,
-      pillars: this.pillars,
+      W, H, T, N,
+      grid: this.grid.map(r => r.join('')),
       exit: this.exit,
       fuses: this.fuses.map(f => ({ x: f.x, y: f.y })),
     };
+  }
+
+  // ----- bot navigation -----
+  los(x0, y0, x1, y1, r) {
+    const d = dist(x0, y0, x1, y1), n = Math.ceil(d / 12);
+    for (let i = 1; i < n; i++) {
+      const t = i / n;
+      if (blockedAt(this.grid, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, r)) return false;
+    }
+    return true;
+  }
+  fieldFor(tx, ty) {
+    const key = ty * N + tx;
+    if (this.field && this.field.key === key) return this.field.df;
+    const df = new Int16Array(N * N).fill(-1);
+    const q = [key]; df[key] = 0;
+    for (let h = 0; h < q.length; h++) {
+      const c = q[h], x = c % N, y = (c / N) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (solidT(this.grid, nx, ny) || df[ny * N + nx] >= 0) continue;
+        df[ny * N + nx] = df[c] + 1; q.push(ny * N + nx);
+      }
+    }
+    this.field = { key, df };
+    return df;
+  }
+  // unit direction the bot should walk to reach (tx,ty)
+  navDir(m, tx, ty) {
+    if (this.los(m.x, m.y, tx, ty, M_RADIUS - 2)) {
+      const d = dist(m.x, m.y, tx, ty) || 1;
+      return [(tx - m.x) / d, (ty - m.y) / d];
+    }
+    const gx = clamp(Math.floor(tx / T), 0, N - 1), gy = clamp(Math.floor(ty / T), 0, N - 1);
+    const df = this.fieldFor(gx, gy);
+    const mx = Math.floor(m.x / T), my = Math.floor(m.y / T);
+    let best = df[my * N + mx], bx = mx, by = my;
+    if (best < 0) return null;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = mx + dx, ny = my + dy;
+      if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+      const v = df[ny * N + nx];
+      if (v >= 0 && v < best) { best = v; bx = nx; by = ny; }
+    }
+    if (bx === mx && by === my) return null;
+    const wx = bx * T + T / 2, wy = by * T + T / 2, d = dist(m.x, m.y, wx, wy) || 1;
+    return [(wx - m.x) / d, (wy - m.y) / d];
+  }
+  nearestFloor(x, y) {
+    if (!blockedAt(this.grid, x, y, M_RADIUS)) return { x, y };
+    const tx = Math.floor(x / T), ty = Math.floor(y / T);
+    for (let r = 1; r <= 5; r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (!solidT(this.grid, tx + dx, ty + dy)) return { x: (tx + dx) * T + T / 2, y: (ty + dy) * T + T / 2 };
+      }
+    }
+    return null;
   }
 
   // ----- lobby -----
@@ -143,7 +269,7 @@ class Game {
       this.respawn(p);
       p.spec = false;
       p.monster = p.id === mid;
-      if (p.monster) p.alive = false; // the monster player is not a survivor
+      if (p.monster) { p.alive = false; p.tp = 1; p.tpT = 0; } // the monster player is not a survivor
     }
     this.phase = 'playing';
     this.phaseT = 0;
@@ -163,8 +289,11 @@ class Game {
 
   // ----- players -----
   respawn(p) {
-    p.x = W / 2 + rnd(-50, 50);
-    p.y = H / 2 + rnd(-50, 50);
+    p.x = 30 * T + rnd(-50, 50);
+    p.y = 30 * T + rnd(-50, 50);
+    p.in = { x: 0, y: 0, sp: false };
+    p.inT = Date.now();
+    p.tp = 0; p.tpT = 0;
     p.alive = true;
     p.escaped = false;
     p.stamina = 100;
@@ -176,7 +305,7 @@ class Game {
     const p = {
       id, name, look, in: { x: 0, y: 0, sp: false },
       x: 0, y: 0, alive: true, escaped: false, stamina: 100, pingCd: 0, noiseT: 0,
-      monster: false, spec: false,
+      monster: false, spec: false, inT: Date.now(), tp: 0, tpT: 0,
     };
     this.respawn(p);
     if (this.phase !== 'lobby') { p.spec = true; p.alive = false; } // joins next round
@@ -224,6 +353,10 @@ class Game {
       return;
     }
 
+    // stop anyone whose client went quiet (tabbed out, lagging)
+    const nowMs = Date.now();
+    for (const p of this.players.values()) if (nowMs - p.inT > 350) p.in = { x: 0, y: 0, sp: false };
+
     // survivors
     for (const p of this.players.values()) {
       if (p.monster || p.spec || !p.alive || p.escaped) continue;
@@ -239,7 +372,7 @@ class Game {
       if (moving) {
         p.x = clamp(p.x + ix * speed * dt, 12, W - 12);
         p.y = clamp(p.y + iy * speed * dt, 12, H - 12);
-        pushOut(p, PLAYER_R, this.pillars);
+        pushOut(p, PLAYER_R, this.grid);
       }
 
       if (sprinting) {
@@ -282,27 +415,25 @@ class Game {
     this.broadcast();
   }
 
-  // a person is the monster
+  // a person is the monster (no sprint, but it can teleport)
   updateHumanMonster(dt) {
     const m = this.monster;
     const p = this.players.get(this.monsterId);
     this.noises = [];
 
-    let { x: ix, y: iy, sp } = p.in;
+    let { x: ix, y: iy } = p.in;
     const len = Math.hypot(ix, iy);
-    const moving = len > 0.01;
-    if (moving) { ix /= len; iy /= len; }
-    const sprinting = sp && moving && p.stamina > 0;
-    const speed = sprinting ? M_PLAYER_SPRINT : M_PLAYER;
-    if (moving) {
-      m.x = clamp(m.x + ix * speed * dt, 20, W - 20);
-      m.y = clamp(m.y + iy * speed * dt, 20, H - 20);
-      pushOut(m, M_RADIUS, this.pillars);
+    if (len > 0.01) {
+      ix /= len; iy /= len;
+      m.x = clamp(m.x + ix * M_PLAYER * dt, 20, W - 20);
+      m.y = clamp(m.y + iy * M_PLAYER * dt, 20, H - 20);
+      pushOut(m, M_RADIUS, this.grid);
     }
-    if (sprinting) p.stamina = Math.max(0, p.stamina - STAMINA_DRAIN * dt);
-    else p.stamina = Math.min(100, p.stamina + STAMINA_REGEN * dt);
-    m.s = sprinting ? 'chase' : 'wander';
+    m.s = 'wander';
     p.x = m.x; p.y = m.y;
+
+    p.tpT = Math.min(TP_TIME, p.tpT + dt);
+    if (p.tpT >= TP_TIME && p.tp < TP_MAX) { p.tp++; p.tpT = 0; }
 
     for (const s of this.survivors()) {
       if (dist(m.x, m.y, s.x, s.y) < M_CATCH) {
@@ -310,6 +441,18 @@ class Game {
         io.to(this.code).emit('ev', { t: 'death', id: s.id, x: s.x, y: s.y });
       }
     }
+  }
+
+  teleport(id, x, y) {
+    if (this.phase !== 'playing' || id !== this.monsterId) return;
+    const p = this.players.get(id);
+    x = Number(x); y = Number(y);
+    if (!p || p.tp < 1 || !isFinite(x) || !isFinite(y)) return;
+    const s = this.nearestFloor(clamp(x, 40, W - 40), clamp(y, 40, H - 40));
+    if (!s) return;
+    const m = this.monster, fx = m.x, fy = m.y;
+    m.x = s.x; m.y = s.y; p.x = m.x; p.y = m.y; p.tp--;
+    io.to(this.code).emit('ev', { t: 'tp', x: m.x, y: m.y, fx, fy });
   }
 
   // the bot is the monster
@@ -325,20 +468,16 @@ class Game {
         const d = dist(m.x, m.y, n.x, n.y);
         if (d < n.r * D.hear && d < bestD) { best = n; bestD = d; }
       }
-      if (best) {
-        m.s = 'investigate';
-        m.tx = best.x + rnd(-40, 40);
-        m.ty = best.y + rnd(-40, 40);
-      }
+      if (best) { m.s = 'investigate'; m.tx = best.x; m.ty = best.y; }
     }
     this.noises = [];
 
-    // sight
+    // sight (walls block it)
     if (m.s !== 'chase') {
       let near = null, nd = Infinity;
       for (const p of alive) {
         const d = dist(m.x, m.y, p.x, p.y);
-        if (d < D.sight && d < nd) { near = p; nd = d; }
+        if (d < D.sight && d < nd && this.los(m.x, m.y, p.x, p.y, 2)) { near = p; nd = d; }
       }
       if (near) { m.s = 'chase'; m.chase = near.id; m.lost = 0; }
     }
@@ -350,9 +489,10 @@ class Game {
         m.s = 'wander'; m.chase = null; this.pickWander(m, alive);
       } else {
         m.tx = t.x; m.ty = t.y;
-        if (dist(m.x, m.y, t.x, t.y) > M_LOSE) {
+        const far = dist(m.x, m.y, t.x, t.y) > M_LOSE || !this.los(m.x, m.y, t.x, t.y, 2);
+        if (far) {
           m.lost += dt;
-          if (m.lost > 3) { m.s = 'investigate'; m.chase = null; m.lost = 0; }
+          if (m.lost > 4) { m.s = 'investigate'; m.chase = null; m.lost = 0; }
         } else m.lost = 0;
       }
     }
@@ -360,28 +500,17 @@ class Game {
     // move
     const base = m.s === 'chase' ? M_CHASE : m.s === 'investigate' ? M_INVESTIGATE : M_WANDER;
     const speed = base * D.spd;
-    let dx = m.tx - m.x, dy = m.ty - m.y;
-    const d = Math.hypot(dx, dy);
-    if (d < 20) {
+    const d = dist(m.x, m.y, m.tx, m.ty);
+    if (d < 24) {
       if (m.s !== 'chase') { m.s = 'wander'; this.pickWander(m, alive); }
     } else {
-      dx /= d; dy /= d;
-      if (m.stuck > 0.25) { // slide around pillars
-        const ang = 1.2 * m.side;
-        const c = Math.cos(ang), s = Math.sin(ang);
-        const rx = dx * c - dy * s, ry = dx * s + dy * c;
-        dx = rx; dy = ry;
+      const dir = this.navDir(m, m.tx, m.ty);
+      if (!dir) { if (m.s !== 'chase') { m.s = 'wander'; this.pickWander(m, alive); } }
+      else {
+        m.x = clamp(m.x + dir[0] * speed * dt, 20, W - 20);
+        m.y = clamp(m.y + dir[1] * speed * dt, 20, H - 20);
+        pushOut(m, M_RADIUS, this.grid);
       }
-      const step = speed * dt;
-      const ox = m.x, oy = m.y;
-      m.x = clamp(m.x + dx * step, 20, W - 20);
-      m.y = clamp(m.y + dy * step, 20, H - 20);
-      pushOut(m, M_RADIUS, this.pillars);
-      const moved = dist(ox, oy, m.x, m.y);
-      if (moved < step * 0.4) {
-        m.stuck += dt;
-        if (m.stuck > 1.2) { m.side = -m.side; m.stuck = 0.3; }
-      } else m.stuck = Math.max(0, m.stuck - dt * 2);
     }
 
     // catch
@@ -395,18 +524,21 @@ class Game {
   }
 
   pickWander(m, alive) {
+    let f = null;
     if (alive.length && Math.random() < 0.4) {
       const p = alive[Math.floor(Math.random() * alive.length)];
-      m.tx = clamp(p.x + rnd(-350, 350), 40, W - 40);
-      m.ty = clamp(p.y + rnd(-350, 350), 40, H - 40);
-    } else {
-      m.tx = rnd(100, W - 100);
-      m.ty = rnd(100, H - 100);
+      for (let i = 0; i < 40 && !f; i++) {
+        const c = this.floors[Math.floor(Math.random() * this.floors.length)];
+        if (dist(c.x, c.y, p.x, p.y) < 450) f = c;
+      }
     }
+    if (!f) f = this.floors[Math.floor(Math.random() * this.floors.length)];
+    m.tx = f.x; m.ty = f.y;
   }
 
   broadcast() {
     const got = this.fuses.filter(f => f.c).length;
+    const mp = this.monsterId ? this.players.get(this.monsterId) : null;
     io.to(this.code).emit('s', {
       ph: this.phase,
       rt: Math.max(0, RESULT_TIME - this.phaseT),
@@ -415,7 +547,7 @@ class Game {
       got,
       need: this.fuses.length,
       open: got >= this.fuses.length,
-      m: { x: Math.round(this.monster.x), y: Math.round(this.monster.y), s: this.monster.s },
+      m: { x: Math.round(this.monster.x), y: Math.round(this.monster.y), s: this.monster.s, tp: mp ? mp.tp : 0, tpp: mp ? Math.round(mp.tpT / TP_TIME * 100) / 100 : 0 },
       p: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10,
         a: p.alive, e: p.escaped, s: Math.round(p.stamina), pc: Math.round(p.pingCd * 10) / 10,
@@ -475,8 +607,10 @@ io.on('connection', (socket) => {
     p.in.x = clamp(Number(inp.x) || 0, -1, 1);
     p.in.y = clamp(Number(inp.y) || 0, -1, 1);
     p.in.sp = !!inp.sp;
+    p.inT = Date.now();
   });
 
+  socket.on('tp', (d) => { if (game && d) game.teleport(socket.id, d.x, d.y); });
   socket.on('ping', () => { if (game) game.ping(socket.id); });
   socket.on('lobby', (d) => { if (game) game.setLobby(socket.id, d); });
   socket.on('start', () => { if (game) game.start(socket.id); });
