@@ -14,7 +14,12 @@ const TICK = 30;
 const DT = 1 / TICK;
 const FUSE_COUNT = 6;
 const RESTART_AFTER = 8; // seconds on win/lose screen
-const SKIN_COUNT = 8;
+// appearance: hair style, hair color, skin tone, shirt style, shirt color, pants, shoes, flashlight
+const LOOK_LIMITS = [9, 9, 5, 5, 12, 10, 8, 8];
+function cleanLook(l) {
+  if (!Array.isArray(l) || l.length !== LOOK_LIMITS.length) return LOOK_LIMITS.map(() => 0);
+  return l.map((v, i) => (Number.isInteger(v) && v >= 0 && v < LOOK_LIMITS[i] ? v : 0));
+}
 
 const WALK = 125, SPRINT = 190;
 const PLAYER_R = 11;
@@ -113,9 +118,9 @@ class Game {
     p.noiseT = 0;
   }
 
-  addPlayer(id, name, skin, hue) {
+  addPlayer(id, name, look) {
     const p = {
-      id, name, skin, hue, in: { x: 0, y: 0, sp: false, f: 0 },
+      id, name, look, in: { x: 0, y: 0, sp: false, f: 0 },
       x: 0, y: 0, alive: true, escaped: false, stamina: 100, pingCd: 0, noiseT: 0,
     };
     this.respawn(p);
@@ -308,7 +313,7 @@ class Game {
       p: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10,
         a: p.alive, e: p.escaped, s: Math.round(p.stamina), pc: Math.round(p.pingCd * 10) / 10,
-        k: p.skin, h: p.hue, f: Math.round((p.in.f || 0) * 100) / 100,
+        l: p.look,
       })),
     });
   }
@@ -336,8 +341,7 @@ io.on('connection', (socket) => {
     if (game) return;
     data = data || {};
     const name = String(data.name || 'Survivor').replace(/[^\w \-]/g, '').slice(0, 12) || 'Survivor';
-    const skin = Number.isInteger(data.skin) && data.skin >= 0 && data.skin < SKIN_COUNT ? data.skin : 0;
-    const hue = Number.isInteger(data.hue) && data.hue >= 0 && data.hue < 360 ? data.hue : 200;
+    const look = cleanLook(data.look);
 
     let room;
     if (data.mode === 'create') {
@@ -353,7 +357,7 @@ io.on('connection', (socket) => {
 
     game = g;
     socket.join(room);
-    game.addPlayer(socket.id, name, skin, hue);
+    game.addPlayer(socket.id, name, look);
     socket.emit('you', { id: socket.id, room });
     socket.emit('map', game.mapPayload());
   });
