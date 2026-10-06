@@ -14,6 +14,7 @@ const TICK = 30;
 const DT = 1 / TICK;
 const FUSE_COUNT = 6;
 const RESTART_AFTER = 8; // seconds on win/lose screen
+const SKIN_COUNT = 8;
 
 const WALK = 125, SPRINT = 190;
 const PLAYER_R = 11;
@@ -112,9 +113,9 @@ class Game {
     p.noiseT = 0;
   }
 
-  addPlayer(id, name) {
+  addPlayer(id, name, skin, hue) {
     const p = {
-      id, name, in: { x: 0, y: 0, sp: false },
+      id, name, skin, hue, in: { x: 0, y: 0, sp: false, f: 0 },
       x: 0, y: 0, alive: true, escaped: false, stamina: 100, pingCd: 0, noiseT: 0,
     };
     this.respawn(p);
@@ -307,6 +308,7 @@ class Game {
       p: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10,
         a: p.alive, e: p.escaped, s: Math.round(p.stamina), pc: Math.round(p.pingCd * 10) / 10,
+        k: p.skin, h: p.hue, f: Math.round((p.in.f || 0) * 100) / 100,
       })),
     });
   }
@@ -317,20 +319,41 @@ class Game {
 // ---------- sockets ----------
 const games = new Map();
 
+function newCode() {
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let c;
+  do {
+    c = '';
+    for (let i = 0; i < 4; i++) c += abc[Math.floor(Math.random() * abc.length)];
+  } while (games.has(c));
+  return c;
+}
+
 io.on('connection', (socket) => {
   let game = null;
 
   socket.on('join', (data) => {
     if (game) return;
-    const name = String((data && data.name) || 'Survivor').replace(/[^\w \-]/g, '').slice(0, 12) || 'Survivor';
-    const room = String((data && data.room) || 'main').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12) || 'main';
+    data = data || {};
+    const name = String(data.name || 'Survivor').replace(/[^\w \-]/g, '').slice(0, 12) || 'Survivor';
+    const skin = Number.isInteger(data.skin) && data.skin >= 0 && data.skin < SKIN_COUNT ? data.skin : 0;
+    const hue = Number.isInteger(data.hue) && data.hue >= 0 && data.hue < 360 ? data.hue : 200;
 
-    game = games.get(room);
-    if (!game) { game = new Game(room); games.set(room, game); }
-    if (game.players.size >= 8) { socket.emit('full'); game = null; return; }
+    let room;
+    if (data.mode === 'create') {
+      room = newCode();
+    } else {
+      room = String(data.room || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12);
+      if (!games.has(room)) { socket.emit('err', { m: 'No game found with that code.' }); return; }
+    }
 
+    let g = games.get(room);
+    if (!g) { g = new Game(room); games.set(room, g); }
+    if (g.players.size >= 8) { socket.emit('err', { m: 'That game is full (8 players max).' }); return; }
+
+    game = g;
     socket.join(room);
-    game.addPlayer(socket.id, name);
+    game.addPlayer(socket.id, name, skin, hue);
     socket.emit('you', { id: socket.id, room });
     socket.emit('map', game.mapPayload());
   });
@@ -342,6 +365,8 @@ io.on('connection', (socket) => {
     p.in.x = clamp(Number(inp.x) || 0, -1, 1);
     p.in.y = clamp(Number(inp.y) || 0, -1, 1);
     p.in.sp = !!inp.sp;
+    const f = Number(inp.f);
+    p.in.f = Number.isFinite(f) ? clamp(f, -7, 7) : 0;
   });
 
   socket.on('ping', () => { if (game) game.ping(socket.id); });

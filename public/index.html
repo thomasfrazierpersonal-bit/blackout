@@ -7,9 +7,13 @@
 <style>
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Courier New",monospace;color:#c9c9c9;user-select:none}
-  canvas{position:fixed;inset:0;display:block}
+  canvas#c{position:fixed;inset:0;display:block}
   #vig{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 35%,rgba(0,0,0,.9) 100%)}
   #flash{position:fixed;inset:0;pointer-events:none;background:#a00;opacity:0;transition:opacity .9s}
+
+  /* in-game HUD (hidden until a game starts) */
+  #hud,#players,#bars,#hint{display:none}
+  body.ingame #hud,body.ingame #players,body.ingame #bars,body.ingame #hint{display:block}
   #hud{position:fixed;left:16px;top:14px;font-size:14px;letter-spacing:1px;text-shadow:0 0 6px #000;pointer-events:none}
   #hud .big{font-size:20px;color:#e8d36a}
   #hud .sub{opacity:.7;margin-top:4px}
@@ -20,43 +24,122 @@
   #stam>div{background:#8a8a8a}
   #pingb>div{background:#3a7aa8}
   #bars small{font-size:10px;letter-spacing:2px;opacity:.55}
+  #hint{position:fixed;left:16px;bottom:16px;font-size:11px;letter-spacing:2px;opacity:.4;pointer-events:none}
   #msg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;pointer-events:none;text-align:center}
   #msg h1{font-size:52px;letter-spacing:10px;margin:0;text-shadow:0 0 20px #000}
   #msg p{opacity:.8;font-size:16px}
-  #join{position:fixed;inset:0;background:#030304;display:flex;align-items:center;justify-content:center;flex-direction:column;z-index:10}
-  #join h1{font-size:64px;letter-spacing:16px;margin:0 0 6px;color:#b11;text-shadow:0 0 24px #600;animation:fl 4s infinite}
+
+  /* main menu */
+  #menu{position:fixed;inset:0;background:#030304;display:flex;align-items:center;justify-content:center;flex-direction:column;z-index:10;padding:16px}
+  #menu h1{font-size:64px;letter-spacing:16px;margin:0 0 6px;color:#b11;text-shadow:0 0 24px #600;animation:fl 4s infinite}
   @keyframes fl{0%,92%,100%{opacity:1}93%{opacity:.2}94%{opacity:.9}95%{opacity:.1}97%{opacity:1}}
-  #join p{max-width:460px;text-align:center;line-height:1.6;opacity:.75;font-size:14px}
-  #join input{background:#0b0b0d;border:1px solid #333;color:#ddd;padding:10px 12px;font:inherit;font-size:16px;width:230px;text-align:center;margin:5px;outline:none}
-  #join input:focus{border-color:#722}
-  #join button{margin-top:12px;background:#300;color:#eee;border:1px solid #622;padding:12px 34px;font:inherit;font-size:16px;letter-spacing:4px;cursor:pointer}
-  #join button:hover{background:#500}
-  #share{margin-top:14px;font-size:12px;opacity:.55}
-  #keys{margin-top:20px;font-size:12px;opacity:.55;line-height:1.8;text-align:center}
+  #menu .tag{max-width:460px;text-align:center;line-height:1.6;opacity:.7;font-size:14px;margin:0 0 18px}
+  #err{min-height:20px;color:#c55;font-size:13px;margin-bottom:6px;text-align:center}
+  .scr{display:flex;flex-direction:column;align-items:center;gap:10px}
+  #menu input[type=text]{background:#0b0b0d;border:1px solid #333;color:#ddd;padding:11px 12px;font:inherit;font-size:16px;width:260px;text-align:center;outline:none}
+  #menu input[type=text]:focus{border-color:#722}
+  button.big{width:260px;background:#300;color:#eee;border:1px solid #622;padding:12px 0;font:inherit;font-size:15px;letter-spacing:4px;cursor:pointer}
+  button.big:hover{background:#500}
+  button.big.alt{background:#111114;border-color:#333;color:#bbb}
+  button.big.alt:hover{background:#1a1a20}
+  button.big.danger{background:#400;border-color:#a33}
+  #helpline{margin-top:22px;font-size:12px;opacity:.45;text-align:center}
+
+  /* customize */
+  #prev{background:#08080b;border:1px solid #2a2a2a;width:180px;height:180px}
+  #skins{display:grid;grid-template-columns:repeat(4,74px);gap:8px}
+  .skinBtn{background:#0b0b0d;border:1px solid #2c2c32;padding:3px;cursor:pointer;color:#888;font:10px "Courier New",monospace;letter-spacing:1px;text-align:center}
+  .skinBtn canvas{display:block;width:64px;height:64px;margin:0 auto 3px}
+  .skinBtn:hover{border-color:#555}
+  .skinBtn.sel{border-color:#c22;color:#fff}
+  #hueRow{display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:2px;opacity:.85}
+  #hueIn{-webkit-appearance:none;appearance:none;width:200px;height:10px;border:1px solid #333;outline:none;
+    background:linear-gradient(90deg,hsl(0,70%,50%),hsl(60,70%,50%),hsl(120,70%,50%),hsl(180,70%,50%),hsl(240,70%,50%),hsl(300,70%,50%),hsl(360,70%,50%))}
+  #hueIn::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:20px;background:#ddd;border:1px solid #000;cursor:pointer}
+  #hueIn::-moz-range-thumb{width:14px;height:20px;background:#ddd;border:1px solid #000;border-radius:0;cursor:pointer}
+
+  /* pause menu */
+  #pause{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;z-index:15}
+  #pause .box{background:#0a0a0d;border:1px solid #333;padding:26px 34px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:340px}
+  #pause h2{margin:0 0 4px;letter-spacing:8px;color:#b11;font-size:26px}
+  #pause .room{font-size:14px;opacity:.85}
+  #pause .room b{letter-spacing:4px;color:#e8d36a;font-size:18px}
+  #pshare{font-size:11px;opacity:.5;cursor:pointer;margin-bottom:8px}
+  #pshare:hover{opacity:.9}
+  #pause .warn{font-size:11px;opacity:.45;max-width:260px;text-align:center;margin:6px 0 0}
+  #pmain,#pkeys{display:flex;flex-direction:column;align-items:center;gap:10px}
+  table.kb{border-collapse:collapse;font-size:13px;margin-bottom:8px}
+  table.kb td{padding:7px 10px;border-bottom:1px solid #222}
+  table.kb td:first-child{color:#e8d36a;letter-spacing:1px;white-space:nowrap}
+  table.kb td:last-child{opacity:.75}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="vig"></div>
 <div id="flash"></div>
-<div id="hud"><div class="big" id="fuses"></div><div class="sub" id="status"></div></div>
+
+<div id="hud"><div class="big" id="fuses"></div><div class="sub" id="status"></div><div class="sub" id="roomtag"></div></div>
 <div id="players"></div>
 <div id="bars">
   <small>STAMINA</small><div class="bar" id="stam"><div></div></div>
   <small>SONAR</small><div class="bar" id="pingb"><div></div></div>
 </div>
+<div id="hint">ESC &nbsp;MENU / KEYBINDS</div>
 <div id="msg"><h1 id="mt"></h1><p id="mp"></p></div>
 
-<div id="join">
+<!-- main menu -->
+<div id="menu">
   <h1>BLACKOUT</h1>
-  <p>The power is out. Something is in here with you.<br>
-  Find all the fuses, open the exit, and get out.<br>
-  It can't see far. But it can <b>hear</b>.</p>
-  <input id="name" maxlength="12" placeholder="your name" autocomplete="off">
-  <input id="room" maxlength="12" placeholder="room code" autocomplete="off">
-  <button id="go">ENTER THE DARK</button>
-  <div id="share"></div>
-  <div id="keys">WASD / arrows: move &nbsp; SHIFT: sprint (loud) &nbsp; SPACE: sonar ping (very loud)<br>Use headphones.</div>
+  <p class="tag">The power is out. Something is in here with you.<br>It can't see far. But it can <b>hear</b>.</p>
+  <div id="err"></div>
+
+  <div id="nameRow"><input type="text" id="name" maxlength="12" placeholder="your name" autocomplete="off"></div>
+
+  <div id="scr-main" class="scr" style="margin-top:10px">
+    <button class="big" id="btn-create">CREATE GAME</button>
+    <button class="big" id="btn-join">JOIN GAME</button>
+    <button class="big alt" id="btn-custom">CUSTOMIZE</button>
+  </div>
+
+  <div id="scr-join" class="scr" style="display:none;margin-top:10px">
+    <input type="text" id="room" maxlength="12" placeholder="game code" autocomplete="off">
+    <button class="big" id="btn-go">JOIN</button>
+    <button class="big alt" id="btn-back1">BACK</button>
+  </div>
+
+  <div id="scr-custom" class="scr" style="display:none">
+    <canvas id="prev" width="180" height="180"></canvas>
+    <div id="skins"></div>
+    <div id="hueRow">COLOR <input type="range" id="hueIn" min="0" max="359" value="200"></div>
+    <button class="big" id="btn-done">DONE</button>
+  </div>
+
+  <div id="helpline">Use headphones. Press ESC in game for keybinds.</div>
+</div>
+
+<!-- pause menu -->
+<div id="pause">
+  <div class="box">
+    <h2>PAUSED</h2>
+    <div id="pmain">
+      <div class="room">Game code: <b id="pcode"></b></div>
+      <div id="pshare" title="click to copy the invite link"></div>
+      <button class="big" id="p-resume">RESUME</button>
+      <button class="big alt" id="p-keys">KEYBINDS</button>
+      <button class="big danger" id="p-leave">LEAVE GAME</button>
+      <p class="warn">The game keeps running while you're in this menu. The monster does not wait.</p>
+    </div>
+    <div id="pkeys" style="display:none">
+      <table class="kb">
+        <tr><td>W A S D / ARROWS</td><td>Move</td></tr>
+        <tr><td>SHIFT</td><td>Sprint (loud, uses stamina)</td></tr>
+        <tr><td>SPACE</td><td>Sonar ping (very loud, 4s cooldown)</td></tr>
+        <tr><td>ESC</td><td>Open / close this menu</td></tr>
+      </table>
+      <button class="big alt" id="p-back">BACK</button>
+    </div>
+  </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
@@ -71,6 +154,10 @@ addEventListener('resize', resize); resize();
 
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function lerpAng(a, b, t) {
+  const d = ((b - a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  return a + d * t;
+}
 
 const WALK = 125, SPRINT = 190, PLAYER_R = 11;
 
@@ -80,38 +167,253 @@ const others = new Map();
 const mon = { x: 0, y: 0, s: 'wander' };
 let pings = [];
 const keys = {};
-let ix = 0, iy = 0, sprint = false;
+let ix = 0, iy = 0, sprint = false, face = 0;
 let prox = 0, shake = 0, lastMonState = 'wander';
 let flickerUntil = 0;
+let paused = false, roomCode = '';
 
-// ---------- join screen ----------
-$('room').value = (location.hash.slice(1) || Math.random().toString(36).slice(2, 6)).toLowerCase();
-$('name').value = localStorage.getItem('bo_name') || '';
-function updateShare() {
-  const r = $('room').value.trim().toLowerCase();
-  $('share').textContent = 'Send friends this link: ' + location.origin + '/#' + r;
+// ---------- skins ----------
+const SKINS = ['Survivor', 'Hollow', 'Hooded', 'Masked', 'Ghost', 'Pumpkin', 'Plague', 'Doll'];
+let skin = clamp(parseInt(localStorage.getItem('bo_skin'), 10) || 0, 0, SKINS.length - 1);
+let hue = localStorage.getItem('bo_hue') === null ? 200 : clamp(parseInt(localStorage.getItem('bo_hue'), 10) || 0, 0, 359);
+
+// Draws one skin in local space: +x is forward, units ~ player radius 11.
+function drawSkin(c, id, hue, t) {
+  const acc = `hsl(${hue},70%,58%)`, accD = `hsl(${hue},45%,28%)`;
+  const ell = (x, y, rx, ry, fill, stroke, lw) => {
+    c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    if (fill) { c.fillStyle = fill; c.fill(); }
+    if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 1.2; c.stroke(); }
+  };
+  const line = (x1, y1, x2, y2, col, lw) => {
+    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2);
+    c.strokeStyle = col; c.lineWidth = lw; c.lineCap = 'round'; c.stroke();
+  };
+  switch (id) {
+    case 0: // Survivor: jacket, flashlight in hand
+      ell(0, 0, 6, 11, accD, '#000', 1);
+      ell(1, 0, 6.5, 6.5, '#d9b99b', '#7a5c44', 1);
+      c.fillStyle = '#8a8a90'; c.fillRect(6, 4.5, 9, 4);
+      c.fillStyle = '#ffe9a0'; c.fillRect(14, 4.5, 2.4, 4);
+      break;
+    case 1: // Hollow: faceless pale head, black suit, too-long arms
+      line(0, -9, 19, -5, '#050507', 2.6);
+      line(0, 9, 19, 5, '#050507', 2.6);
+      ell(0, 0, 6, 11, '#0b0b0e', '#2a2a30', 1.2);
+      c.fillStyle = acc; c.fillRect(5, -1, 5, 2);
+      ell(1, 0, 6.8, 6.8, '#ececec', '#9a9a9a', 1);
+      break;
+    case 2: // Hooded: dark hood, two glowing eyes
+      ell(0, 0, 6.5, 11, '#14141b', '#2b2b36');
+      ell(1, 0, 7.6, 7.6, '#0d0d12', acc, 1.4);
+      c.save(); c.shadowColor = acc; c.shadowBlur = 8;
+      ell(6.2, -2.6, 1.5, 1.5, acc); ell(6.2, 2.6, 1.5, 1.5, acc);
+      c.restore();
+      break;
+    case 3: // Masked: cracked white mask
+      ell(0, 0, 6, 11, accD, '#000');
+      ell(1, 0, 7, 7, '#f1f1ee', '#999', 1);
+      ell(5, -2.6, 1.5, 2.1, '#0a0a0a'); ell(5, 2.6, 1.5, 2.1, '#0a0a0a');
+      line(6.8, -2, 6.8, 2, '#222', 1);
+      line(-3, -4.5, 3, 0.5, '#b0b0b0', 0.9);
+      break;
+    case 4: // Ghost: translucent, trailing wisps
+      c.globalAlpha *= 0.8;
+      for (let i = 0; i < 3; i++) {
+        ell(-8 - i * 4.5, Math.sin(t * 5 + i * 1.7) * 3, 5.5 - i * 1.2, 5.5 - i * 1.2, `rgba(220,232,244,${0.75 - i * 0.2})`);
+      }
+      ell(0, 0, 8, 10, '#dce8f4');
+      ell(5, -3.2, 1.8, 2.6, '#0a1018'); ell(5, 3.2, 1.8, 2.6, '#0a1018');
+      ell(7.6, 0, 1, 1.6, '#0a1018');
+      break;
+    case 5: // Pumpkin: ridged head with glowing carved eyes
+      ell(0, 0, 6, 11, accD, '#000');
+      ell(1, 0, 8.2, 8.2, '#e07a1a', '#7a3a08', 1.2);
+      for (let a = 0; a < 6; a++) {
+        const ang = a * Math.PI / 3 + 0.26;
+        line(1, 0, 1 + Math.cos(ang) * 8, Math.sin(ang) * 8, 'rgba(110,50,8,0.6)', 0.9);
+      }
+      ell(1, 0, 1.8, 1.8, '#3f5f1c');
+      c.save(); c.shadowColor = '#ffb347'; c.shadowBlur = 6; c.fillStyle = '#1a0a00';
+      for (const sy of [-3.2, 3.2]) {
+        c.beginPath(); c.moveTo(7.2, sy - 1.8); c.lineTo(7.2, sy + 1.8); c.lineTo(4.6, sy); c.closePath(); c.fill();
+      }
+      c.restore();
+      break;
+    case 6: // Plague: wide hat, long beak, glowing lenses
+      ell(0, 0, 6, 11, '#16161c', '#2c2c36');
+      ell(0, 0, 10, 10, '#0e0e12', '#2a2a33', 1.2);
+      ell(0, 0, 5, 5, '#17171d');
+      c.beginPath(); c.moveTo(3, -3.6); c.lineTo(20, 0); c.lineTo(3, 3.6); c.closePath();
+      c.fillStyle = '#d4cbb0'; c.fill(); c.strokeStyle = '#8a826a'; c.lineWidth = 1; c.stroke();
+      c.save(); c.shadowColor = acc; c.shadowBlur = 6;
+      ell(4.5, -3.4, 1.7, 1.7, acc); ell(4.5, 3.4, 1.7, 1.7, acc);
+      c.restore();
+      break;
+    case 7: // Doll: porcelain face, pigtails, cracks
+      ell(-1, -10, 3.6, 3.6, acc, '#000', 0.8);
+      ell(-1, 10, 3.6, 3.6, acc, '#000', 0.8);
+      ell(0, 0, 6, 10, accD, '#000');
+      ell(1, 0, 7, 7, '#f3ece4', '#b9aea4', 1);
+      ell(5.2, -4.6, 1.8, 1.8, 'rgba(210,100,100,0.8)'); ell(5.2, 4.6, 1.8, 1.8, 'rgba(210,100,100,0.8)');
+      ell(5, -2.4, 1.3, 2, '#111'); ell(5, 2.4, 1.3, 2, '#111');
+      line(-3, -5, 1.5, 0, '#8a7f7f', 0.9); line(1.5, 0, -1, 5, '#8a7f7f', 0.9);
+      break;
+  }
 }
-$('room').addEventListener('input', updateShare); updateShare();
 
-$('go').onclick = () => {
+function placeSkin(c, x, y, ang, scale, id, hue, t) {
+  c.save();
+  c.translate(x, y); c.rotate(ang); c.scale(scale, scale);
+  drawSkin(c, id, hue, t);
+  c.restore();
+}
+
+// ---------- menu ----------
+let curScreen = 'main';
+function setErr(m) { $('err').textContent = m || ''; }
+function showScreen(s) {
+  curScreen = s;
+  for (const id of ['main', 'join', 'custom']) $('scr-' + id).style.display = id === s ? 'flex' : 'none';
+  $('nameRow').style.display = s === 'custom' ? 'none' : 'block';
+  setErr('');
+  if (s === 'join') $('room').focus();
+  if (s === 'custom') refreshMinis();
+}
+
+const miniCanvases = [];
+function buildSkinGrid() {
+  const grid = $('skins');
+  SKINS.forEach((nm, i) => {
+    const b = document.createElement('div');
+    b.className = 'skinBtn';
+    const cn = document.createElement('canvas'); cn.width = cn.height = 64;
+    const lb = document.createElement('div'); lb.textContent = nm.toUpperCase();
+    b.appendChild(cn); b.appendChild(lb);
+    b.onclick = () => { skin = i; saveLook(); refreshMinis(); };
+    grid.appendChild(b);
+    miniCanvases.push({ cn, b });
+  });
+}
+function refreshMinis() {
+  miniCanvases.forEach(({ cn, b }, i) => {
+    const c = cn.getContext('2d');
+    c.clearRect(0, 0, 64, 64);
+    c.fillStyle = '#0b0b0f'; c.fillRect(0, 0, 64, 64);
+    placeSkin(c, 32, 32, -Math.PI / 2, 2.4, i, hue, 0);
+    b.classList.toggle('sel', i === skin);
+  });
+}
+function saveLook() {
+  localStorage.setItem('bo_skin', skin);
+  localStorage.setItem('bo_hue', hue);
+}
+function previewLoop(t) {
+  if ($('menu').style.display !== 'none' && curScreen === 'custom') {
+    const c = $('prev').getContext('2d');
+    c.clearRect(0, 0, 180, 180);
+    const g = c.createRadialGradient(90, 90, 10, 90, 90, 95);
+    g.addColorStop(0, '#1b1b22'); g.addColorStop(1, '#060608');
+    c.fillStyle = g; c.fillRect(0, 0, 180, 180);
+    placeSkin(c, 90, 90, t / 1000 * 0.9, 6, skin, hue, t / 1000);
+  }
+  requestAnimationFrame(previewLoop);
+}
+
+$('name').value = localStorage.getItem('bo_name') || '';
+$('hueIn').value = hue;
+$('hueIn').addEventListener('input', e => { hue = parseInt(e.target.value, 10); saveLook(); refreshMinis(); });
+$('btn-create').onclick = () => startSession('create');
+$('btn-join').onclick = () => showScreen('join');
+$('btn-go').onclick = () => startSession('join');
+$('btn-back1').onclick = () => showScreen('main');
+$('btn-custom').onclick = () => showScreen('custom');
+$('btn-done').onclick = () => showScreen('main');
+$('room').addEventListener('keydown', e => { if (e.key === 'Enter') startSession('join'); });
+$('name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startSession(curScreen === 'join' ? 'join' : 'create');
+});
+
+// ---------- session ----------
+function startSession(mode) {
+  if (socket) return;
   const name = $('name').value.trim() || 'Survivor';
-  const room = $('room').value.trim().toLowerCase() || 'main';
+  const room = $('room').value.trim().toLowerCase();
+  if (mode === 'join' && !room) { setErr('Enter a game code.'); return; }
   localStorage.setItem('bo_name', name);
-  location.hash = room;
-  initAudio();
-  socket = io();
-  socket.on('connect', () => socket.emit('join', { name, room }));
-  socket.on('full', () => alert('Room is full (8 max).'));
-  socket.on('you', d => { myId = d.id; });
-  socket.on('map', m => { map = m; me.need = true; pings = []; });
-  socket.on('s', onSnap);
-  socket.on('ev', onEvent);
-  $('join').style.display = 'none';
+  if (!AC) initAudio(); else if (AC.state === 'suspended') AC.resume();
+  setErr('Connecting...');
+
+  const s = io();
+  socket = s;
+  s.on('connect', () => s.emit('join', { mode, name, room, skin, hue }));
+  s.on('connect_error', () => setErr('Could not reach the server.'));
+  s.on('err', d => {
+    setErr(d.m);
+    s.removeAllListeners(); s.disconnect();
+    if (socket === s) socket = null;
+  });
+  s.on('you', d => {
+    myId = d.id; roomCode = d.room;
+    history.replaceState(null, '', '#' + d.room);
+    $('menu').style.display = 'none';
+    document.body.classList.add('ingame');
+    $('roomtag').textContent = 'ROOM ' + d.room.toUpperCase();
+  });
+  s.on('map', m => { map = m; me.need = true; pings = []; });
+  s.on('s', onSnap);
+  s.on('ev', onEvent);
+  s.on('disconnect', () => { if (socket === s && myId) leaveGame('Disconnected from the server.'); });
+}
+
+function leaveGame(msg) {
+  if (socket) { socket.removeAllListeners(); socket.disconnect(); socket = null; }
+  map = null; snap = null; myS = null; myId = null;
+  others.clear(); pings = []; me.need = true;
+  mon.first = undefined; mon.tx = undefined;
+  prox = 0; shake = 0; lastMonState = 'wander';
+  for (const k in keys) keys[k] = false;
+  paused = false;
+  $('pause').style.display = 'none';
+  $('msg').style.display = 'none';
+  $('players').innerHTML = '';
+  document.body.classList.remove('ingame');
+  history.replaceState(null, '', location.pathname);
+  $('menu').style.display = 'flex';
+  showScreen('main');
+  if (msg) setErr(msg);
+}
+
+// ---------- pause menu ----------
+function setPaused(v) {
+  paused = v;
+  $('pause').style.display = v ? 'flex' : 'none';
+  if (v) {
+    for (const k in keys) keys[k] = false;
+    $('pmain').style.display = 'flex'; $('pkeys').style.display = 'none';
+    $('pcode').textContent = roomCode.toUpperCase();
+    $('pshare').textContent = location.origin + '/#' + roomCode;
+  } else if (document.activeElement) document.activeElement.blur();
+}
+$('p-resume').onclick = () => setPaused(false);
+$('p-keys').onclick = () => { $('pmain').style.display = 'none'; $('pkeys').style.display = 'flex'; };
+$('p-back').onclick = () => { $('pkeys').style.display = 'none'; $('pmain').style.display = 'flex'; };
+$('p-leave').onclick = () => leaveGame();
+$('pshare').onclick = () => {
+  const link = location.origin + '/#' + roomCode;
+  if (navigator.clipboard) navigator.clipboard.writeText(link).catch(() => {});
+  $('pshare').textContent = 'Copied!';
+  setTimeout(() => { $('pshare').textContent = link; }, 1200);
 };
 
 // ---------- input ----------
 addEventListener('keydown', e => {
-  if (!socket) return;
+  if (e.code === 'Escape') {
+    if (socket && map) setPaused(!paused);
+    else if (!socket && $('menu').style.display !== 'none' && curScreen !== 'main') showScreen('main');
+    return;
+  }
+  if (!socket || !map || paused) return;
   keys[e.code] = true;
   if (e.code === 'Space') {
     e.preventDefault();
@@ -123,7 +425,7 @@ addEventListener('keyup', e => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 setInterval(() => {
-  if (socket && map) socket.emit('i', { x: ix, y: iy, sp: sprint });
+  if (socket && map) socket.emit('i', { x: ix, y: iy, sp: sprint, f: Math.round(face * 100) / 100 });
 }, 33);
 
 // ---------- network handlers ----------
@@ -139,8 +441,9 @@ function onSnap(s) {
       else { me.x += (p.x - me.x) * 0.08; me.y += (p.y - me.y) * 0.08; }
     } else {
       let o = others.get(p.id);
-      if (!o) { o = { x: p.x, y: p.y }; others.set(p.id, o); }
+      if (!o) { o = { x: p.x, y: p.y, fa: p.f }; others.set(p.id, o); }
       o.id = p.id; o.tx = p.x; o.ty = p.y; o.n = p.n; o.a = p.a; o.e = p.e;
+      o.k = p.k; o.h = p.h; o.tf = p.f;
     }
   }
   for (const id of [...others.keys()]) if (!seen.has(id)) others.delete(id);
@@ -204,7 +507,7 @@ function updateHud() {
   $('pingb').firstElementChild.style.width = (myS ? (1 - myS.pc / 4) * 100 : 100) + '%';
   $('players').innerHTML = snap.p.map(p => {
     const st = p.e ? 'escaped' : p.a ? 'alive' : 'dead';
-    const col = st === 'dead' ? '#733' : st === 'escaped' ? '#6a6' : colorFor(p.id);
+    const col = st === 'dead' ? '#733' : st === 'escaped' ? '#6a6' : `hsl(${p.h},65%,62%)`;
     return `<div style="color:${col}">${p.n}${p.id === myId ? ' (you)' : ''} ${st === 'dead' ? '✝' : st === 'escaped' ? '↑' : ''}</div>`;
   }).join('');
 
@@ -276,11 +579,14 @@ function heartbeat() {
 function update(dt) {
   // input
   let x = 0, y = 0;
-  if (keys.KeyW || keys.ArrowUp) y -= 1;
-  if (keys.KeyS || keys.ArrowDown) y += 1;
-  if (keys.KeyA || keys.ArrowLeft) x -= 1;
-  if (keys.KeyD || keys.ArrowRight) x += 1;
-  ix = x; iy = y; sprint = !!(keys.ShiftLeft || keys.ShiftRight);
+  if (!paused) {
+    if (keys.KeyW || keys.ArrowUp) y -= 1;
+    if (keys.KeyS || keys.ArrowDown) y += 1;
+    if (keys.KeyA || keys.ArrowLeft) x -= 1;
+    if (keys.KeyD || keys.ArrowRight) x += 1;
+  }
+  ix = x; iy = y; sprint = !paused && !!(keys.ShiftLeft || keys.ShiftRight);
+  if (x || y) face = lerpAng(face, Math.atan2(y, x), Math.min(1, dt * 14));
 
   // local prediction
   if (map && isAlive()) {
@@ -295,7 +601,10 @@ function update(dt) {
 
   // smooth others + monster
   const k = Math.min(1, dt * 14);
-  for (const o of others.values()) { o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k; }
+  for (const o of others.values()) {
+    o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k;
+    if (o.tf !== undefined) o.fa = lerpAng(o.fa === undefined ? o.tf : o.fa, o.tf, k);
+  }
   if (mon.tx !== undefined) { mon.x += (mon.tx - mon.x) * k; mon.y += (mon.ty - mon.y) * k; }
   if (snap) mon.s = snap.m.s;
 
@@ -362,7 +671,7 @@ function draw(tsec) {
   ctx.fillRect(ex.x - 34, ex.y - 34, 68, 68);
   ctx.strokeStyle = snap.open ? '#5f5' : '#733'; ctx.lineWidth = 3;
   ctx.strokeRect(ex.x - 34, ex.y - 34, 68, 68);
-  ctx.fillStyle = '#000'; ctx.font = '13px monospace'; ctx.textAlign = 'center';
+  ctx.font = '13px monospace'; ctx.textAlign = 'center';
   ctx.fillStyle = snap.open ? '#9f9' : '#a55'; ctx.fillText('EXIT', ex.x, ex.y + 5);
 
   // fuses
@@ -375,16 +684,21 @@ function draw(tsec) {
     ctx.fillStyle = '#6b5a10'; ctx.fillRect(f.x - 7, f.y - 3, 14, 6);
   }
 
-  // players
-  const drawP = (p, x, y, isMe) => {
+  // players (skins)
+  const drawP = (p, x, y, ang, isMe) => {
     if (p.e) return;
-    ctx.fillStyle = p.a ? colorFor(p.id) : '#422';
-    ctx.beginPath(); ctx.arc(x, y, PLAYER_R, 0, 7); ctx.fill();
-    if (!p.a) { ctx.strokeStyle = '#a33'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x - 7, y - 7); ctx.lineTo(x + 7, y + 7); ctx.moveTo(x + 7, y - 7); ctx.lineTo(x - 7, y + 7); ctx.stroke(); }
-    if (!isMe) { ctx.fillStyle = '#ccc'; ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.fillText(p.n, x, y - 18); }
+    ctx.save();
+    if (!p.a) ctx.globalAlpha = 0.35;
+    placeSkin(ctx, x, y, ang || 0, 1, p.k | 0, p.h === undefined ? 200 : p.h, tsec);
+    ctx.restore();
+    if (!p.a) {
+      ctx.strokeStyle = '#a33'; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(x - 7, y - 7); ctx.lineTo(x + 7, y + 7); ctx.moveTo(x + 7, y - 7); ctx.lineTo(x - 7, y + 7); ctx.stroke();
+    }
+    if (!isMe) { ctx.fillStyle = '#ccc'; ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.fillText(p.n, x, y - 22); }
   };
-  for (const o of others.values()) drawP(o, o.x, o.y, false);
-  if (myS) drawP({ id: myId, a: myS.a, e: myS.e, n: myS.n }, me.x, me.y, true);
+  for (const o of others.values()) drawP(o, o.x, o.y, o.fa, false);
+  if (myS) drawP(myS, me.x, me.y, face, true);
 
   // monster body (only seen when lit)
   ctx.fillStyle = '#1b0505'; ctx.strokeStyle = '#4a0808'; ctx.lineWidth = 2;
@@ -502,7 +816,15 @@ function frame(t) {
   update(dt); draw(t / 1000);
   requestAnimationFrame(frame);
 }
+
+// ---------- init ----------
+buildSkinGrid();
 requestAnimationFrame(frame);
+requestAnimationFrame(previewLoop);
+if (location.hash.length > 1) {
+  $('room').value = location.hash.slice(1).toLowerCase();
+  showScreen('join');
+}
 </script>
 </body>
 </html>
