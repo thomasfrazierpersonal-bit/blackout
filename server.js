@@ -13,9 +13,11 @@ const W = 2400, H = 2400;
 const TICK = 30;
 const DT = 1 / TICK;
 const FUSE_COUNT = 6;
-const RESTART_AFTER = 8; // seconds on win/lose screen
-// appearance: hair style, hair color, skin tone, shirt style, shirt color, pants, shoes, flashlight
-const LOOK_LIMITS = [9, 9, 5, 5, 12, 10, 8, 8];
+const RESULT_TIME = Number(process.env.BLACKOUT_RESULT_TIME) || 8; // seconds on the win/lose screen
+const MAX_PLAYERS = 8;
+
+// appearance: hair style, hair color, skin tone, shirt style, shirt color, pants, shoes
+const LOOK_LIMITS = [9, 9, 5, 5, 12, 10, 21];
 function cleanLook(l) {
   if (!Array.isArray(l) || l.length !== LOOK_LIMITS.length) return LOOK_LIMITS.map(() => 0);
   return l.map((v, i) => (Number.isInteger(v) && v >= 0 && v < LOOK_LIMITS[i] ? v : 0));
@@ -27,8 +29,16 @@ const STAMINA_DRAIN = 32, STAMINA_REGEN = 16;
 const PING_COOLDOWN = 4;
 const PING_NOISE = 750, SPRINT_NOISE = 380, FUSE_NOISE = 520;
 
+// bot monster
 const M_WANDER = 70, M_INVESTIGATE = 112, M_CHASE = 168;
 const M_SIGHT = 200, M_LOSE = 450, M_RADIUS = 18, M_CATCH = 26;
+const DIFF = {
+  easy:   { spd: 0.85, hear: 0.8, sight: 170 },
+  normal: { spd: 1,    hear: 1,   sight: 200 },
+  hard:   { spd: 1.12, hear: 1.2, sight: 235 },
+};
+// human-controlled monster
+const M_PLAYER = 150, M_PLAYER_SPRINT = 205;
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
@@ -48,11 +58,18 @@ function pushOut(o, rad, pillars) {
 
 // ---------- game room ----------
 class Game {
-  constructor(code) {
+  constructor(code, hostId) {
     this.code = code;
     this.players = new Map();
-    this.phase = 'playing';
+    this.hostId = hostId;
+    this.phase = 'lobby'; // lobby -> playing -> won | lost -> lobby
     this.phaseT = 0;
+    this.tickN = 0;
+    this.mode = 'bot';    // who plays the monster: 'random' | 'pick' | 'bot'
+    this.pickId = null;
+    this.diff = 'normal';
+    this.monsterId = null; // set while a human is playing the monster
+    this.noises = [];
     this.genMap();
     this.timer = setInterval(() => this.tick(), 1000 / TICK);
   }
@@ -100,14 +117,51 @@ class Game {
     };
   }
 
-  resetRound() {
+  // ----- lobby -----
+  setLobby(id, d) {
+    if (id !== this.hostId || this.phase !== 'lobby' || !d) return;
+    if (['random', 'pick', 'bot'].includes(d.mode)) this.mode = d.mode;
+    if (this.mode === 'pick' && typeof d.pickId === 'string' && this.players.has(d.pickId)) this.pickId = d.pickId;
+    if (['easy', 'normal', 'hard'].includes(d.diff)) this.diff = d.diff;
+  }
+
+  start(id) {
+    if (id !== this.hostId || this.phase !== 'lobby') return;
+    this.startRound();
+  }
+
+  startRound() {
+    this.genMap();
+    const ids = [...this.players.keys()];
+    let mid = null;
+    if (ids.length >= 2) {
+      if (this.mode === 'random') mid = ids[Math.floor(Math.random() * ids.length)];
+      else if (this.mode === 'pick' && this.pickId && this.players.has(this.pickId)) mid = this.pickId;
+    }
+    this.monsterId = mid;
+    for (const p of this.players.values()) {
+      this.respawn(p);
+      p.spec = false;
+      p.monster = p.id === mid;
+      if (p.monster) p.alive = false; // the monster player is not a survivor
+    }
     this.phase = 'playing';
     this.phaseT = 0;
-    this.genMap();
-    for (const p of this.players.values()) this.respawn(p);
     io.to(this.code).emit('map', this.mapPayload());
   }
 
+  returnToLobby() {
+    this.phase = 'lobby';
+    this.phaseT = 0;
+    this.monsterId = null;
+    for (const p of this.players.values()) {
+      this.respawn(p);
+      p.monster = false;
+      p.spec = false;
+    }
+  }
+
+  // ----- players -----
   respawn(p) {
     p.x = W / 2 + rnd(-50, 50);
     p.y = H / 2 + rnd(-50, 50);
@@ -120,40 +174,59 @@ class Game {
 
   addPlayer(id, name, look) {
     const p = {
-      id, name, look, in: { x: 0, y: 0, sp: false, f: 0 },
+      id, name, look, in: { x: 0, y: 0, sp: false },
       x: 0, y: 0, alive: true, escaped: false, stamina: 100, pingCd: 0, noiseT: 0,
+      monster: false, spec: false,
     };
     this.respawn(p);
+    if (this.phase !== 'lobby') { p.spec = true; p.alive = false; } // joins next round
     this.players.set(id, p);
     return p;
   }
 
-  addNoise(x, y, r) { this.noises.push({ x, y, r }); }
+  removePlayer(id) {
+    this.players.delete(id);
+    if (this.hostId === id) this.hostId = this.players.keys().next().value || null;
+    if (this.pickId === id) this.pickId = null;
+    if (this.monsterId === id) this.monsterId = null; // the bot takes over
+  }
+
+  survivors() {
+    return [...this.players.values()].filter(p => !p.monster && !p.spec && p.alive && !p.escaped);
+  }
+
+  addNoise(x, y, r) {
+    this.noises.push({ x, y, r });
+    if (this.monsterId) io.to(this.monsterId).emit('ev', { t: 'noise', x, y, r });
+  }
 
   ping(id) {
     const p = this.players.get(id);
-    if (!p || !p.alive || p.escaped || this.phase !== 'playing' || p.pingCd > 0) return;
+    if (!p || p.monster || p.spec || !p.alive || p.escaped || this.phase !== 'playing' || p.pingCd > 0) return;
     p.pingCd = PING_COOLDOWN;
     this.addNoise(p.x, p.y, PING_NOISE);
     io.to(this.code).emit('ev', { t: 'ping', id, x: p.x, y: p.y });
   }
 
+  // ----- main loop -----
   tick() {
     const dt = DT;
+    this.tickN++;
     this.phaseT += dt;
 
-    if (this.phase !== 'playing') {
-      if (this.phaseT > RESTART_AFTER && this.players.size > 0) this.resetRound();
+    if (this.phase === 'lobby') {
+      if (this.tickN % 6 === 0) this.broadcast();
+      return;
+    }
+    if (this.phase === 'won' || this.phase === 'lost') {
+      if (this.phaseT > RESULT_TIME) this.returnToLobby();
       this.broadcast();
       return;
     }
 
-    const got = this.fuses.filter(f => f.c).length;
-    const need = this.fuses.length;
-
-    // players
+    // survivors
     for (const p of this.players.values()) {
-      if (!p.alive || p.escaped) continue;
+      if (p.monster || p.spec || !p.alive || p.escaped) continue;
       p.pingCd = Math.max(0, p.pingCd - dt);
 
       let { x: ix, y: iy, sp } = p.in;
@@ -195,31 +268,62 @@ class Game {
       }
     }
 
-    this.updateMonster(dt);
+    // monster: a human if one was chosen and is still here, otherwise the bot
+    if (this.monsterId && this.players.has(this.monsterId)) this.updateHumanMonster(dt);
+    else this.updateMonster(dt);
 
     // win / lose
-    if (this.players.size > 0) {
-      const remaining = [...this.players.values()].filter(p => p.alive && !p.escaped).length;
-      if (remaining === 0) {
-        const escaped = [...this.players.values()].some(p => p.escaped);
-        this.phase = escaped ? 'won' : 'lost';
-        this.phaseT = 0;
-      }
+    if (this.players.size > 0 && this.survivors().length === 0) {
+      const escaped = [...this.players.values()].some(p => !p.monster && !p.spec && p.escaped);
+      this.phase = escaped ? 'won' : 'lost';
+      this.phaseT = 0;
     }
 
     this.broadcast();
   }
 
+  // a person is the monster
+  updateHumanMonster(dt) {
+    const m = this.monster;
+    const p = this.players.get(this.monsterId);
+    this.noises = [];
+
+    let { x: ix, y: iy, sp } = p.in;
+    const len = Math.hypot(ix, iy);
+    const moving = len > 0.01;
+    if (moving) { ix /= len; iy /= len; }
+    const sprinting = sp && moving && p.stamina > 0;
+    const speed = sprinting ? M_PLAYER_SPRINT : M_PLAYER;
+    if (moving) {
+      m.x = clamp(m.x + ix * speed * dt, 20, W - 20);
+      m.y = clamp(m.y + iy * speed * dt, 20, H - 20);
+      pushOut(m, M_RADIUS, this.pillars);
+    }
+    if (sprinting) p.stamina = Math.max(0, p.stamina - STAMINA_DRAIN * dt);
+    else p.stamina = Math.min(100, p.stamina + STAMINA_REGEN * dt);
+    m.s = sprinting ? 'chase' : 'wander';
+    p.x = m.x; p.y = m.y;
+
+    for (const s of this.survivors()) {
+      if (dist(m.x, m.y, s.x, s.y) < M_CATCH) {
+        s.alive = false;
+        io.to(this.code).emit('ev', { t: 'death', id: s.id, x: s.x, y: s.y });
+      }
+    }
+  }
+
+  // the bot is the monster
   updateMonster(dt) {
     const m = this.monster;
-    const alive = [...this.players.values()].filter(p => p.alive && !p.escaped);
+    const D = DIFF[this.diff] || DIFF.normal;
+    const alive = this.survivors();
 
     // hear noises
     if (m.s !== 'chase') {
       let best = null, bestD = Infinity;
       for (const n of this.noises) {
         const d = dist(m.x, m.y, n.x, n.y);
-        if (d < n.r && d < bestD) { best = n; bestD = d; }
+        if (d < n.r * D.hear && d < bestD) { best = n; bestD = d; }
       }
       if (best) {
         m.s = 'investigate';
@@ -234,7 +338,7 @@ class Game {
       let near = null, nd = Infinity;
       for (const p of alive) {
         const d = dist(m.x, m.y, p.x, p.y);
-        if (d < M_SIGHT && d < nd) { near = p; nd = d; }
+        if (d < D.sight && d < nd) { near = p; nd = d; }
       }
       if (near) { m.s = 'chase'; m.chase = near.id; m.lost = 0; }
     }
@@ -242,7 +346,7 @@ class Game {
     // chase upkeep
     if (m.s === 'chase') {
       const t = this.players.get(m.chase);
-      if (!t || !t.alive || t.escaped) {
+      if (!t || !t.alive || t.escaped || t.monster || t.spec) {
         m.s = 'wander'; m.chase = null; this.pickWander(m, alive);
       } else {
         m.tx = t.x; m.ty = t.y;
@@ -254,7 +358,8 @@ class Game {
     }
 
     // move
-    const speed = m.s === 'chase' ? M_CHASE : m.s === 'investigate' ? M_INVESTIGATE : M_WANDER;
+    const base = m.s === 'chase' ? M_CHASE : m.s === 'investigate' ? M_INVESTIGATE : M_WANDER;
+    const speed = base * D.spd;
     let dx = m.tx - m.x, dy = m.ty - m.y;
     const d = Math.hypot(dx, dy);
     if (d < 20) {
@@ -304,7 +409,8 @@ class Game {
     const got = this.fuses.filter(f => f.c).length;
     io.to(this.code).emit('s', {
       ph: this.phase,
-      rt: Math.max(0, RESTART_AFTER - this.phaseT),
+      rt: Math.max(0, RESULT_TIME - this.phaseT),
+      lb: { host: this.hostId, mode: this.mode, pick: this.pickId, diff: this.diff },
       fc: this.fuses.map(f => (f.c ? 1 : 0)),
       got,
       need: this.fuses.length,
@@ -313,7 +419,7 @@ class Game {
       p: [...this.players.values()].map(p => ({
         id: p.id, n: p.name, x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10,
         a: p.alive, e: p.escaped, s: Math.round(p.stamina), pc: Math.round(p.pingCd * 10) / 10,
-        l: p.look,
+        l: p.look, mo: p.monster ? 1 : 0, sp: p.spec ? 1 : 0,
       })),
     });
   }
@@ -352,8 +458,8 @@ io.on('connection', (socket) => {
     }
 
     let g = games.get(room);
-    if (!g) { g = new Game(room); games.set(room, g); }
-    if (g.players.size >= 8) { socket.emit('err', { m: 'That game is full (8 players max).' }); return; }
+    if (!g) { g = new Game(room, socket.id); games.set(room, g); }
+    if (g.players.size >= MAX_PLAYERS) { socket.emit('err', { m: 'That game is full (8 players max).' }); return; }
 
     game = g;
     socket.join(room);
@@ -369,15 +475,15 @@ io.on('connection', (socket) => {
     p.in.x = clamp(Number(inp.x) || 0, -1, 1);
     p.in.y = clamp(Number(inp.y) || 0, -1, 1);
     p.in.sp = !!inp.sp;
-    const f = Number(inp.f);
-    p.in.f = Number.isFinite(f) ? clamp(f, -7, 7) : 0;
   });
 
   socket.on('ping', () => { if (game) game.ping(socket.id); });
+  socket.on('lobby', (d) => { if (game) game.setLobby(socket.id, d); });
+  socket.on('start', () => { if (game) game.start(socket.id); });
 
   socket.on('disconnect', () => {
     if (!game) return;
-    game.players.delete(socket.id);
+    game.removePlayer(socket.id);
     if (game.players.size === 0) {
       game.destroy();
       games.delete(game.code);
